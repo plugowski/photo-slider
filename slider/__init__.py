@@ -1,11 +1,11 @@
-from math import pi, ceil
+from math import pi, floor
 from machine import Pin
 import uasyncio as asyncio
 
 # todo: managae semaphore for motor - only one process can use a motor at once
 # todo: manage async push buttons
 # todo: manage beter stop action
-# todo: when edge has been reached, move aboit 1mm in oposite direction (to release button)
+# todo: define default motor speed in calibration and manual mode
 
 """
 Slider knows:
@@ -24,30 +24,31 @@ class Slider:
     length = 0
 
     def __init__(self, dolly: Dolly, motor: Motor):
+        self.loop = asyncio.get_event_loop()
         self.dolly = dolly
         self.motor = motor
-        self.loop = asyncio.get_event_loop()
 
     """ Reset slider, so move dolly on start position
     """
     async def reset(self):
         return self.loop.create_task(self.motor.moveto_edge(self.motor.LEFT))
 
-    """ Calibrate slider, so get information about current dolly position and slider length
+    """ Calibrate slider - initialize move dolly to the end (one edge) and go back to start
     """
     async def calibrate(self):
         # reset length
         self.length = 0
 
         # move dolly to the end...
-        await self.motor.moveto_edge(self.motor.LEFT)
-
-        self.dolly.set_position(0)
-
-        # ...then go to start and calculate total slider length...
         await self.motor.moveto_edge(self.motor.RIGHT)
 
-        # set length and position
+        # ...reset position to calculate total length of slider...
+        self.dolly.set_position(0)
+
+        # ...then go to start and calculate length...
+        await self.motor.moveto_edge(self.motor.LEFT)
+
+        # ...set length and position (always 0 - start)
         self.length = abs(self.dolly.get_position())
         self.dolly.set_position(0)
 
@@ -69,12 +70,17 @@ class Slider:
     """ Move dolly by direction in time 
     """
     def move_dolly(self, distance: int, direction: int, time: int=None):
-        self.loop.create_task(self.motor.move(distance, direction, time))
+        self.loop.create_task(self.motor.move(direction, distance, time))
+
+    """ Move dolly by direction in time 
+    """
+    def move_dolly_edge(self, direction: int):
+        self.loop.create_task(self.motor.moveto_edge(direction))
 
     """ Manual move dolly it shouldn't be async, just in real time move
     """
     def move_dolly_manual(self, direction: int):
-        self.motor.move(1, direction)
+        self.motor.move(direction, 1)
 
 
 """
@@ -90,8 +96,8 @@ class Dolly:
 
     """ Change 
     """
-    def change_position(self, value):
-        self.current_position += value
+    def change_position(self, value, direction):
+        self.current_position += direction * value
 
     """ Set current position for dolly
     """
@@ -119,14 +125,23 @@ Motor can:
 
 class Motor:
 
+    """
+    Direction constants
+    """
     RIGHT = 1
     LEFT = -1
 
+    MAX_SPEED = 160   # mm/s
+    MIN_SPEED = 0.16  # mm/s
+
     """ Determine if motor should be stopped """
     motor_stop = False
+    """ Check if limit switch has been reached """
+    limit_switch = False
 
     def __init__(self, step: Pin, direction: Pin, edge: Pin, dolly: Dolly, resolution: int=200, pulley: float=10.2):
         self.loop = asyncio.get_event_loop()
+        self.locker = Lock()
         self.dolly = dolly
 
         self.rotate = 2 * pi * (pulley / 2)
@@ -143,16 +158,11 @@ class Motor:
 
     """ Make one step in specified direction
     """
-    def step(self, direction: int):
+    def step(self, direction: int, ignore_switch: bool=False):
 
-        # check if edge was reached
-        if self.__limit_switch() or not self.__can_work():
-            # once motor stopped, switch it again to False
-            self.motor_stop = False
+        # check if edge was reached or motor hasn't been stopped
+        if (not ignore_switch and self.__limit_switch()) or not self.__can_work():
             return False
-
-        # update dolly position (+/- 1 step)
-        self.loop.call_soon(self.dolly.change_position, direction)
 
         # set direction
         self.pin_dir.value(direction == 1)
@@ -160,45 +170,109 @@ class Motor:
         # send signal on/off to motor
         self.pin_step.on()
         self.pin_step.off()
-
         return True
+
+    """ Rotate as many steps until reach 1mm distance on pulley
+    """
+    def move_mm(self, direction: int):
+
+        steps_moved = 0
+        steps_to_do = self.__calculate_steps(1)
+        move_status = True
+
+        while steps_moved < steps_to_do:
+            move_status = self.step(direction)
+            if not move_status:
+                break
+            steps_moved += 1
+
+        # update dolly position (+/- X steps)
+        self.loop.call_soon(self.dolly.change_position, steps_moved, direction)
+        return move_status
 
     """ Move belt by distance on specified direction in time
     """
-    async def move(self, distance: float, direction: int, time: int=None) -> int:
+    async def move(self, direction: int, distance: int, time: int = None) -> int:
 
-        moved = 0
-        steps = self.__calculate_steps(distance)
-        interval = self.__get_interval(steps, time)
+        try:
+            # lock motor
+            self.locker.lock('move')
+            # todo: check if interval isn't smaller than minimum interval (max speed)
+            interval = self.__get_interval(distance, time)
 
-        while moved < steps:
-            if not self.step(direction):
-                break
+            # move dolly by 1 mm until whole distance will be reached
+            moved = 0
+            while moved < distance:
+                if not self.move_mm(direction):
+                    break
+                moved += 1
+                await asyncio.sleep_ms(interval)
 
-            moved += 1
-            await asyncio.sleep_ms(interval)
+            # even if motor has been stopped now is time to reset status
+            self.start()
+            self.locker.unlock('move')
 
-        return moved
+        except LockedProcessException:
+            return False
+
+        return True
 
     """ Rotate motor as long as limit switch will be achieved
     """
     async def moveto_edge(self, direction: int):
 
-        moved = 0
-        while self.step(direction):
-            await asyncio.sleep(0)
+        try:
 
-        return moved
+            self.locker.lock('move_edge')
+
+            counter = 0
+            while self.move_mm(direction):
+                counter += 1
+                await asyncio.sleep_ms(0)
+
+            # when motor move to edge it reach limit switch, to release it dolly should go back couple steps
+            self.release_limit_switch(-1 * direction)
+
+            # even if motor has been stopped now is time to reset status
+            self.start()
+            self.locker.unlock('move_edge')
+
+        except LockedProcessException:
+            return False
+
+        return True
+
+    """ If limit switch will be reached, it is necessary to move it oposite until release
+    """
+    def release_limit_switch(self, direction: int):
+
+        steps_moved = 0
+        while self.pin_edge.value() == 1:
+            self.step(direction, True)
+            steps_moved += 1
+
+        # update dolly position (+/- X steps)
+        self.loop.call_soon(self.dolly.change_position, steps_moved, direction)
 
     """ Stop motor!
     """
     def stop(self):
         self.motor_stop = True
 
+    """ Start motor
+    """
+    def start(self):
+        self.motor_stop = False
+
+    """ Check if motor is locked / is working
+    """
+    def is_locked(self):
+        return self.locker.is_locked()
+
     """ Convert distance in mm into steps
     """
-    def __calculate_steps(self, distance: float) -> int:
-        return int(ceil(distance / self.step_distance))
+    def __calculate_steps(self, distance: int) -> int:
+        return int(floor(distance / self.step_distance))
 
     """ Check limit switch status
     """
@@ -213,9 +287,38 @@ class Motor:
     """ Calculate interval for each step by stepper motor return interval in milliseconds
     """
     @staticmethod
-    def __get_interval(steps: int, time: int=None) -> int:
+    def __get_interval(distance: int = None, time: int = None) -> int:
 
-        if time is None or time == 0:
+        if time is None or distance is None or distance == 0:
             return 0
 
-        return int((1 / (steps / time)) * 1000)
+        return int((time / distance) * 1000)
+
+
+"""
+Locker to avoid race condition in access to motor
+"""
+
+
+class Lock:
+
+    is_lock = False
+    locked_by = None
+
+    def lock(self, process: str=None):
+        if self.is_lock and self.locked_by != process:
+            raise LockedProcessException()
+
+        self.is_lock = True
+        self.locked_by = process
+
+    def unlock(self, process: str=None):
+        if self.locked_by == process:
+            self.is_lock = False
+
+    def is_locked(self):
+        return self.is_lock
+
+
+class LockedProcessException(Exception):
+    pass
