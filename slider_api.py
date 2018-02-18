@@ -5,6 +5,12 @@ from slider import Slider
 import uasyncio as asyncio
 
 
+class Ping:
+
+    def get(self, api_request):
+        return {'status': 'ok'}
+
+
 class Move:
 
     def __init__(self, slider: Slider):
@@ -52,9 +58,8 @@ class Move:
     """
     def __move(self, request):
         direction = self.slider.motor.LEFT if request['direction'] == 'left' else self.slider.motor.RIGHT
-        # todo: minimum distance = 10cm, so you can set distance as multilication of 10
         if 'distance' in request:
-            self.slider.move_dolly(request['distance'], direction, request['time'])
+            self.slider.move_dolly(int(request['distance']), direction, int(request['time']))
         else:
             self.slider.move_dolly_edge(direction)
 
