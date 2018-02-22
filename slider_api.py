@@ -1,14 +1,8 @@
 """
 Define API for slider via http server
 """
-from slider import Slider
+from slider import Slider, MotorDriver
 import uasyncio as asyncio
-
-
-class Ping:
-
-    def get(self, api_request):
-        return {'status': 'ok'}
 
 
 class Move:
@@ -38,26 +32,20 @@ class Move:
     """
     def __handle_action(self, request):
 
-        if self.slider.motor.is_locked():
-            return {'status': 'error', 'msg': 'motor_locked'}
+        # if self.slider.motor.is_locked():
+        #     return {'status': 'error', 'msg': 'motor_locked'}
 
         if request['action'] == 'calibrate':
             return self.__calibrate()
         elif request['action'] == 'move':
             return self.__move(request)
         else:
-            return {'ststus': 'error', 'msg': 'action_not_found'}
-
-    """ Slider calibration trigger
-    """
-    def __calibrate(self):
-        self.loop.create_task(self.slider.calibrate())
-        return {'status': 'ok'}
+            return {'status': 'error', 'msg': 'action_not_found'}
 
     """ Move dolly
     """
     def __move(self, request):
-        direction = self.slider.motor.LEFT if request['direction'] == 'left' else self.slider.motor.RIGHT
+        direction = MotorDriver.LEFT if request['direction'] == 'left' else MotorDriver.RIGHT
         if 'distance' in request:
             self.slider.move_dolly(int(request['distance']), direction, int(request['time']))
         else:

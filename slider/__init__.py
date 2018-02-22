@@ -1,11 +1,8 @@
 from math import pi
-from machine import Pin, PWM
+from oled import ssd1306
+from machine import Pin, PWM, I2C
 import uasyncio as asyncio
-
-# todo: managae semaphore for motor - only one process can use a motor at once
-# todo: manage async push buttons
-# todo: manage beter stop action
-# todo: define default motor speed in calibration and manual mode
+import time as systime
 
 
 """
@@ -102,6 +99,8 @@ class Motor:
     """ Check if limit switch has been reached """
     limit_switch = False
 
+    resolution = frequency = direction = time_ms = start_time = end_time = None
+
     def __init__(self, motor_driver: MotorDriver, edge: Pin, resolution: int=200, pulley: float=10.2):
 
         self.motor_driver = motor_driver
@@ -122,30 +121,31 @@ class Motor:
         try:
 
             # max available speed
-            resolution = 1
-            frequency = 800
-            time_ms = (distance / frequency) * 1000
+            self.direction = direction
+            self.step_distance = distance
+            self.resolution = 1
+            self.frequency = 800
+            self.time_ms = (distance / self.frequency) * 1000
 
             if time is not None:
 
                 # calculate frequency and resolution for specified distance and time
+                self.time_ms = time * 1000
                 steps_to_move = distance * self.steps_per_mm
                 prev_frequency = prev_resolution = None
 
                 for resolution in MotorDriver.resolutions:
-                    frequency = (steps_to_move / time) * resolution
+                    self.frequency = (steps_to_move / time) * resolution
 
-                    if (resolution == 1 and frequency < 400) or frequency < 1000:
-                        prev_frequency = frequency
-                        prev_resolution = resolution
+                    if (resolution == 1 and self.frequency < 400) or self.frequency < 1000:
+                        prev_frequency = self.frequency
+                        prev_resolution = self.resolution
                         continue
                     else:
-                        frequency = prev_frequency
-                        resolution = prev_resolution
+                        self.frequency = prev_frequency
+                        self.resolution = prev_resolution
 
                     break
-
-                time_ms = time * 1000
 
             # todo: check if motor is locked self.locker.is_locked()
             # todo: lock motor
@@ -156,12 +156,17 @@ class Motor:
 
             self.motor_driver\
                 .set_direction(direction)\
-                .set_resolution(resolution)\
-                .start(frequency)
+                .set_resolution(self.resolution)\
+                .start(int(self.frequency))
 
-            await asyncio.sleep_ms(time_ms)
+            self.start_time = systime.ticks_us()
+            # todo: zbadac czemu nie dziala sleep...
+            await asyncio.sleep_ms(self.time_ms)
 
+            # todo: usunac event edge
             self.motor_driver.stop()
+            self.end_time = systime.ticks_us()
+            self.start_time = None
             # self.locker.unlock('move')
 
         except LockedProcessException:
@@ -182,6 +187,9 @@ class Motor:
                 .set_direction(direction)\
                 .start(700)
 
+            self.end_time = systime.ticks_us()
+            self.start_time = None
+
         except LockedProcessException:
             return False
 
@@ -190,27 +198,30 @@ class Motor:
     async def edge(self):
 
         while True:
+
+            await asyncio.sleep_ms(5)
+
+            # if motor not working > exit
+
             if self.pin_edge.value() == 0:
 
                 self.motor_driver\
                     .set_opposite_direction()\
                     .set_resolution(4)\
-                    .start(500)
-                await asyncio.sleep_ms(100)
+                    .start(1000)
+                await asyncio.sleep_ms(43)
                 self.motor_driver.stop()
                 break
 
         return True
 
-    """ If limit switch will be reached, it is necessary to move it oposite until release
-    """
-    # def release_limit_switch(self):
-        # todo: przesuwac slider tak dlugo jak switch jest wcisniety
-
     """ Stop motor!
     """
-    def stop(self):
+    async def stop(self):
+
+        print('stop_event')
         self.motor_driver.stop()
+        return True
 
 
 """
@@ -308,7 +319,7 @@ class Slider:
     """ Force stop motor
     """
     def stop(self):
-        self.loop.call_soon(self.motor.stop)
+        self.loop.create_task(self.motor.stop)
 
     """ Move dolly by direction in time
     """
