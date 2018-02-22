@@ -1,5 +1,4 @@
 from machine import Pin, freq
-from oled import *
 from slider import *
 from uhttpd import Server, api_handler
 import network
@@ -26,12 +25,6 @@ freq(160000000)
 # setup WiFi
 ap = network.WLAN(network.AP_IF)
 ap.config(essid=b"SliderMCU", authmode=network.AUTH_WPA_WPA2_PSK, password=b"GoProSlider")
-
-i2c = I2C(scl=pin_display_scl, sda=pin_display_sda)
-display = ssd1306.SSD1306_I2C(64, 48, i2c)
-
-display.text('elo', 0, 0)
-display.show()
 
 async def wifi_status(led: Pin):
     while True:
