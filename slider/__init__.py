@@ -1,6 +1,6 @@
 from math import pi
-from oled import ssd1306
-from machine import Pin, PWM, I2C
+import ssd1306
+from machine import Pin, PWM
 import uasyncio as asyncio
 import time as systime
 
@@ -34,6 +34,9 @@ class MotorDriver:
     def __init__(self, step: Pin, direction: Pin, m1: Pin, m2: Pin, m3: Pin):
 
         self.pwm = PWM(step)
+        self.pwm.duty(512)
+        self.pwm.deinit()
+
         self.direction = direction
         self.m1 = m1
         self.m2 = m2
@@ -70,7 +73,7 @@ class MotorDriver:
     def start(self, frequency: int):
 
         self.pwm.freq(frequency)
-        self.pwm.duty(512)
+        self.pwm.init()
 
     """ Stop sending move signal to motor
     """
@@ -113,6 +116,7 @@ class Motor:
 
         # configure pins
         self.pin_edge = edge
+        self.pin_edge.irq(trigger=Pin.IRQ_FALLING, handler=self.stop)
 
     """ Move belt by distance on specified direction in time
     """
@@ -152,6 +156,7 @@ class Motor:
             # self.locker.lock('move')
 
             # listen edge limiter events
+            asyncio.get_event_loop().create_task(Slider.display_status())
             asyncio.get_event_loop().create_task(self.edge())
 
             self.motor_driver\
@@ -217,7 +222,7 @@ class Motor:
 
     """ Stop motor!
     """
-    async def stop(self):
+    def stop(self, irq=None):
 
         print('stop_event')
         self.motor_driver.stop()
@@ -296,15 +301,44 @@ class Slider:
     """ Total length of slider in steps """
     length = 0
 
-    def __init__(self, dolly: Dolly, motor: Motor):
+    def __init__(self, dolly: Dolly, motor: Motor, display: ssd1306.SSD1306_I2C = None):
         self.loop = asyncio.get_event_loop()
         self.dolly = dolly
         self.motor = motor
+        self.display = display
 
     """ Reset slider, so move dolly on start position
     """
     async def reset(self):
         return self.loop.create_task(self.motor.moveto_edge(MotorDriver.LEFT))
+
+    """ Display status information on the screen
+    """
+    async def display_status(self):
+
+        if self.display is None:
+            return True
+
+        while True:
+            print(self.motor.start_time)
+            print(self.motor.frequency)
+            if self.motor.start_time is not None:
+                self.display.fill(0)
+                self.display.text('<<' if MotorDriver.LEFT == self.motor.direction else '>>', 0, 0)
+                self.display.text(str(self.motor.frequency), 30, 0)
+                total_time = self.motor.time_ms / 1000
+                self.display.text(str(total_time) + ' s', 0, 9)
+                time_left = round(total_time - systime.ticks_diff(systime.ticks_us(), self.motor.start_time) / 1000000, 1)
+                self.display.text(str(time_left) + ' s', 0, 18)
+                self.display.show()
+            await asyncio.sleep_ms(50)
+
+    @staticmethod
+    def nice_time(seconds: float) -> str:
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        return "%d:%02d:%02d" % (h, m, s)
+
 
     """ Move dolly to start position
     """

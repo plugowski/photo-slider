@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Client</title>
+</head>
+<body>
+
+<strong>Received:</strong> <span id="response">(Received content)</span>
+
+<form id="send">
+    <input type="text" name=""/> <input type="submit" value="SEND">
+</form>
+
+<hr/>
+
+<button class="action" data-action="left">&laquo;</button>
+<button class="action" data-action="stop">STOP</button>
+<button class="action" data-action="right">&raquo;</button> <br/>
+
+<input type="radio" name="resolution" value="1" checked="checked"> 1<br/>
+<input type="radio" name="resolution" value="2"> 2<br/>
+<input type="radio" name="resolution" value="4"> 4<br/>
+<input type="radio" name="resolution" value="8"> 8<br/>
+<input type="radio" name="resolution" value="16"> 16<br/>
+
+<script>
+    var ws = new WebSocket("ws://192.168.4.1:80");
+
+    var form = document.getElementById("send");
+    form.addEventListener("submit", function(e){
+        e.preventDefault();
+        ws.send(form.elements[0].value);
+    }, false);
+
+    var actions = document.getElementsByClassName('action');
+
+   for (var i = 0; i < actions.length; i++) {
+        actions[i].addEventListener('click', function(e) {
+            e.preventDefault();
+            var cmd = {};
+            cmd.action = this.getAttribute('data-action');
+            ws.send(JSON.stringify(cmd))
+        }, false);
+    }
+
+    var res = document.getElementsByName('resolution');
+    for (var i = 0; i < res.length; i++) {
+        res[i].addEventListener('click', function(e) {
+            if (this.checked) {
+                var cmd = {};
+                cmd.action = 'resolution';
+                cmd.value = this.value;
+                ws.send(JSON.stringify(cmd))
+            }
+        }, false);
+    }
+
+    ws.onmessage = function (evt) {
+        document.getElementById("response").innerHTML = evt.data;
+    };
+</script>
+</body>
+</html>
