@@ -1,20 +1,13 @@
 from uwebsocket import WebSocketServer, WebSocketClient, ClientClosedError
 import ujson
-import ssd1306
-import uasyncio as asyncio
-from machine import I2C, Pin
-from slider import Motor, MotorDriver
-
-i2c = I2C(scl=Pin(23), sda=Pin(22))
-oled = ssd1306.SSD1306_I2C(128, 64, i2c)
-oled.contrast(1)
+from slider import Slider
 
 
 class SliderClient(WebSocketClient):
 
-    def __init__(self, conn, driver: MotorDriver):
+    def __init__(self, conn, slider: Slider):
         super().__init__(conn)
-        self.motor = driver
+        self.slider = slider
 
     def process(self):
         try:
@@ -29,28 +22,32 @@ class SliderClient(WebSocketClient):
                 self.connection.write("cmd: " + msg)
                 command = ujson.loads(msg)
                 print(command)
-                loop = asyncio.get_event_loop()
 
-                if command['action'] == 'left':
-                    self.motor.set_direction(0)
-                    self.motor.start(500)
-                    # loop.call_soon(self.motor.start(500))
-                elif command['action'] == 'right':
-                    self.motor.set_direction(1)
-                    self.motor.start(500)
-                    # loop.call_soon(self.motor.start(500))
+                if command['action'] == 'move':
+                    self.slider.move_dolly(
+                        int(command['distance']),
+                        self.slider.motor.motor_driver.LEFT if command['direction'] == 'left' else self.slider.motor.motor_driver.RIGHT,
+                        int(command['time'])
+                    )
+                elif command['action'] == 'driver':
+                    self.slider.motor.motor_driver\
+                        .set_resolution(int(command['value']))\
+                        .set_direction(command['direction'])
+
+                elif command['action'] == 'speed':
+                    self.slider.speed(int(command['speed']))
                 elif command['action'] == 'resolution':
-                    print('val: ' + command['value'])
-                    self.motor.set_resolution(int(command['value']))
+                    self.slider.motor.motor_driver.set_resolution(int(command['value']))
                 elif command['action'] == 'stop':
-                    self.motor.stop()
+                    self.slider.motor.stop()
 
-                self.connection.write("cmd: " + msg)
-                oled.fill(0)
-                oled.text(command['action'], 0, 0)
-                oled.show()
+                # todo: zwracac status slidera przez socket
+                self.slider.display.fill_rect(0, 56, 128, 8, 0)
+                self.slider.display.text(command['action'], 0, 56)
+                self.slider.display.show()
 
             except ValueError:
+                print('wrong command!')
                 self.connection.write('Wrong command!')
 
         except ClientClosedError:
@@ -58,9 +55,9 @@ class SliderClient(WebSocketClient):
 
 
 class SliderServer(WebSocketServer):
-    def __init__(self, motor: MotorDriver):
-        self.motor = motor
+    def __init__(self, slider: Slider):
+        self.slider = slider
         super().__init__("www/index.html", 2)
 
     def _make_client(self, conn):
-        return SliderClient(conn, self.motor)
+        return SliderClient(conn, self.slider)

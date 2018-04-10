@@ -4,13 +4,15 @@ from machine import Pin, ADC
 class Config:
 
     display_active = True
-    display_width = 64
-    display_height = 48
+    display_width = 128
+    display_height = 64
 
     display_scl = Pin(23)
     display_sda = Pin(22)
 
+    # battery voltage: 2.5 - 4.2 (7.5 - 12.6)
     # adc = ADC(Pin(36))
+    # adc.atten(ADC.ATTN_11DB)
 
     # define status led (on-board led)
     status_led = Pin(2, Pin.OUT)

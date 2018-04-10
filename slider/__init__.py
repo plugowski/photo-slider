@@ -1,4 +1,5 @@
-from math import pi
+import copy
+from math import pi, ceil
 import ssd1306
 from machine import Pin, PWM
 import uasyncio as asyncio
@@ -102,7 +103,7 @@ class Motor:
     """ Check if limit switch has been reached """
     limit_switch = False
 
-    resolution = frequency = direction = time_ms = start_time = end_time = None
+    microsteps = frequency = direction = time_ms = start_time = end_time = None
 
     def __init__(self, motor_driver: MotorDriver, edge: Pin, resolution: int=200, pulley: float=10.2):
 
@@ -117,62 +118,57 @@ class Motor:
         # configure pins
         self.pin_edge = edge
         self.pin_edge.irq(trigger=Pin.IRQ_FALLING, handler=self.stop)
+        self.microsteps = 1
 
     """ Move belt by distance on specified direction in time
     """
-    async def move(self, direction: int, distance: int, time: int = None) -> int:
+    async def move(self, direction: int, distance: int = None, time: int = None, speed: int = None) -> int:
 
         try:
-
+            print('move')
             # max available speed
             self.direction = direction
-            self.step_distance = distance
-            self.resolution = 1
+
+            # default values for move without time
+            self.microsteps = 1
             self.frequency = 800
             self.time_ms = (distance / self.frequency) * 1000
+
+            # jak liczyć speed?
 
             if time is not None:
 
                 # calculate frequency and resolution for specified distance and time
                 self.time_ms = time * 1000
+                print('time_ms: ' + str(self.time_ms))
                 steps_to_move = distance * self.steps_per_mm
-                prev_frequency = prev_resolution = None
 
-                for resolution in MotorDriver.resolutions:
-                    self.frequency = (steps_to_move / time) * resolution
+                resolutions = copy.copy(MotorDriver.resolutions)
+                resolutions.reverse()
 
-                    if (resolution == 1 and self.frequency < 400) or self.frequency < 1000:
-                        prev_frequency = self.frequency
-                        prev_resolution = self.resolution
-                        continue
-                    else:
-                        self.frequency = prev_frequency
-                        self.resolution = prev_resolution
+                for resolution in resolutions:
+                    print('real freq: ' + str((steps_to_move / time) * resolution))
+                    self.frequency = ceil((steps_to_move / time) * resolution)
+                    print('check res: ' + str(resolution) + ' frq: ' + str(self.frequency))
 
-                    break
-
-            # todo: check if motor is locked self.locker.is_locked()
-            # todo: lock motor
-            # self.locker.lock('move')
-
-            # listen edge limiter events
-            asyncio.get_event_loop().create_task(Slider.display_status())
-            asyncio.get_event_loop().create_task(self.edge())
+                    if self.frequency <= 1000:
+                        self.microsteps = resolution
+                        self.time_ms = int(distance / (self.step_distance / resolution) / self.frequency * 1000)
+                        print('corrected time: ' + str(self.time_ms))
+                        break
 
             self.motor_driver\
                 .set_direction(direction)\
-                .set_resolution(self.resolution)\
-                .start(int(self.frequency))
+                .set_resolution(self.microsteps)\
+                .start(self.frequency)
 
             self.start_time = systime.ticks_us()
-            # todo: zbadac czemu nie dziala sleep...
+
             await asyncio.sleep_ms(self.time_ms)
 
-            # todo: usunac event edge
-            self.motor_driver.stop()
+            self.stop()
             self.end_time = systime.ticks_us()
             self.start_time = None
-            # self.locker.unlock('move')
 
         except LockedProcessException:
             return False
@@ -181,19 +177,16 @@ class Motor:
 
     """ Rotate motor as long as limit switch will be reached
     """
-    async def moveto_edge(self, direction: int):
+    async def moveto_edge(self, direction: int, resolution: int=None, freq:int=None):
 
         try:
 
-            asyncio.get_event_loop().create_task(self.edge())
+            self.start_time = systime.ticks_us()
 
             self.motor_driver\
-                .set_resolution(1)\
+                .set_resolution(1 if resolution is None else resolution)\
                 .set_direction(direction)\
-                .start(700)
-
-            self.end_time = systime.ticks_us()
-            self.start_time = None
+                .start(700 if freq is None else freq)
 
         except LockedProcessException:
             return False
@@ -226,6 +219,8 @@ class Motor:
 
         print('stop_event')
         self.motor_driver.stop()
+        self.end_time = systime.ticks_us()
+        self.start_time = None
         return True
 
 
@@ -301,16 +296,17 @@ class Slider:
     """ Total length of slider in steps """
     length = 0
 
-    def __init__(self, dolly: Dolly, motor: Motor, display: ssd1306.SSD1306_I2C = None):
+    def __init__(self, motor: Motor, display: ssd1306.SSD1306_I2C = None):
         self.loop = asyncio.get_event_loop()
-        self.dolly = dolly
         self.motor = motor
         self.display = display
+
+        self.loop.create_task(self.display_status())
 
     """ Reset slider, so move dolly on start position
     """
     async def reset(self):
-        return self.loop.create_task(self.motor.moveto_edge(MotorDriver.LEFT))
+        self.loop.create_task(self.motor.moveto_edge(MotorDriver.LEFT))
 
     """ Display status information on the screen
     """
@@ -319,43 +315,68 @@ class Slider:
         if self.display is None:
             return True
 
+        width = 128
+        bat_w = 15
+        status = 6
+
+        self.display.fill(0)
+        self.display.text('Initialized!', 0, 0)
+        self.display.rect(width - bat_w - 2, 0, bat_w, 7, 1)
+        self.display.rect(width - 2, 2, 2, 3, 1)
+        self.display.fill_rect(width - bat_w, 2, status, 3, 1)
+        self.display.show()
+
         while True:
-            print(self.motor.start_time)
-            print(self.motor.frequency)
             if self.motor.start_time is not None:
-                self.display.fill(0)
-                self.display.text('<<' if MotorDriver.LEFT == self.motor.direction else '>>', 0, 0)
-                self.display.text(str(self.motor.frequency), 30, 0)
-                total_time = self.motor.time_ms / 1000
-                self.display.text(str(total_time) + ' s', 0, 9)
-                time_left = round(total_time - systime.ticks_diff(systime.ticks_us(), self.motor.start_time) / 1000000, 1)
-                self.display.text(str(time_left) + ' s', 0, 18)
+
+                total_time = (0 if self.motor.time_ms is None else self.motor.time_ms) / 1000
+                time_elapsed = systime.ticks_diff(systime.ticks_us(), self.motor.start_time)
+                print(time_elapsed)
+                # todo: max dla ticks_us to 536870911, licznik przekreca sie po okolo 13,5min...
+                time_left = round(total_time - (time_elapsed / 1000000), 2)
+                print(time_left)
+                distance_elapsed = self.motor.frequency * (time_elapsed / 1000000) * (self.motor.step_distance / self.motor.microsteps)
+
+                self.display.fill_rect(0, 9, 128, 64, 0)
+                self.display.line(0, 9, 128, 9, 1)
+                self.display.text('<<<<<<<' if MotorDriver.LEFT == self.motor.direction else '>>>>>>>', 36, 12)
+                self.display.text('TOTAL: ' + str(self.nice_time(int(total_time))), 0, 23)
+                self.display.text('LEFT:  ' + str(self.nice_time(int(time_left))), 0, 32)
+
+                self.display.text('DIST:  ' + str(int(distance_elapsed)) + ' mm', 0, 41)
+
+                self.display.line(0, 54, 128, 54, 1)
+                self.display.text('R/Hz: ' + str(self.motor.microsteps) + '/' + str(self.motor.frequency), 0, 56)
                 self.display.show()
-            await asyncio.sleep_ms(50)
+            await asyncio.sleep_ms(1000)
 
     @staticmethod
-    def nice_time(seconds: float) -> str:
+    def nice_time(seconds: int) -> str:
         m, s = divmod(seconds, 60)
         h, m = divmod(m, 60)
-        return "%d:%02d:%02d" % (h, m, s)
-
+        return "%02d:%02d:%02d" % (h, m, s)
 
     """ Move dolly to start position
     """
     def goto_start(self):
-        self.loop.create_task(self.motor.moveto_edge(MotorDriver.LEFT))
+        self.loop.call_soon(self.motor.moveto_edge(MotorDriver.LEFT))
 
     """ Move dolly to end position
     """
     def goto_end(self):
-        self.loop.create_task(self.motor.moveto_edge(MotorDriver.RIGHT))
+        self.loop.call_soon(self.motor.moveto_edge(MotorDriver.RIGHT))
 
     """ Force stop motor
     """
     def stop(self):
-        self.loop.create_task(self.motor.stop)
+        self.loop.call_soon(self.motor.stop)
+
+    """ Change motor speed
+    """
+    def speed(self, value: int):
+        self.motor.motor_driver.set_resolution(value)
 
     """ Move dolly by direction in time
     """
     def move_dolly(self, distance: int, direction: int, time: int=None):
-        self.loop.create_task(self.motor.move(direction, distance, time))
+        self.loop.call_soon(self.motor.move(direction, distance, time))
