@@ -4,56 +4,96 @@
     <meta charset="UTF-8">
     <title>ESP Slider</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="apple-touch-icon" href="data:image/png;base64,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">
     <style>
         body {
             font-family: "Helvetica Neue", Helvetica
             #background-color: #222220;
             #color: #fff;
         }
+        .action {
+            height: 40px;
+            width: 70px;
+            background-color: #222;
+            color: #fff;
+            font-size: 16px;
+        }
+        #send > input {
+            font-size: 16px;
+            text-align: center;
+            padding: 5px;
+            border: 1px solid #000;
+            width: 200px;
+        }
+
+        input[type="radio"] {
+            width: 30px;
+        }
+
+        #response {
+            width: 100%;
+            height: 50px;
+            font-family: mono, 'courier new';
+            font-size: 12px;
+            border: 0;
+            padding: 0;
+        }
     </style>
 </head>
 <body>
 
-<strong>Received:</strong><br/>
-<span id="response">(Received content)</span>
+<div style="text-align: center;">
+    <form id="send">
+        Distance:<br/><input type="number" pattern="\d*" value="100"/> <br/>
+        Time:<br/><input type="number" pattern="\d*" value="3"/> <br/>
+        Speed:<br/><input type="number" pattern="\d*" value=""/>
+    </form>
 
-<form id="send">
-    <input type="text" name=""/> <input type="submit" value="SEND">
-</form>
+    <hr/>
 
-<hr/>
+    <button class="action" data-action="left">&laquo;</button>
+    <button class="action" data-action="stop">STOP</button>
+    <button class="action" data-action="right">&raquo;</button> <br/>
 
-<button class="action" data-action="left">&laquo;</button>
-<button class="action" data-action="stop">STOP</button>
-<button class="action" data-action="right">&raquo;</button> <br/>
+    <hr/>
 
-<input type="radio" name="resolution" value="1" checked="checked"> 1<br/>
-<input type="radio" name="resolution" value="2"> 2<br/>
-<input type="radio" name="resolution" value="4"> 4<br/>
-<input type="radio" name="resolution" value="8"> 8<br/>
-<input type="radio" name="resolution" value="16"> 16<br/>
+    <input type="radio" name="resolution" value="1" checked="checked"> 1
+    <input type="radio" name="resolution" value="2"> 2
+    <input type="radio" name="resolution" value="4"> 4
+    <input type="radio" name="resolution" value="8"> 8
+    <input type="radio" name="resolution" value="16"> 16<br/>
+
+    <hr/>
+
+    <textarea id="response">Received content goes here!</textarea>
+</div>
+
 
 <script>
     var ws = new WebSocket("ws://192.168.4.1:80");
-
     var form = document.getElementById("send");
-    form.addEventListener("submit", function(e){
-        e.preventDefault();
-        ws.send(form.elements[0].value);
-    }, false);
-
     var actions = document.getElementsByClassName('action');
+    var res = document.getElementsByName('resolution');
 
-   for (var i = 0; i < actions.length; i++) {
+    for (var i = 0; i < actions.length; i++) {
         actions[i].addEventListener('click', function(e) {
             e.preventDefault();
             var cmd = {};
-            cmd.action = this.getAttribute('data-action');
+
+            cmd.action = 'stop';
+            if (this.getAttribute('data-action') != 'stop') {
+                cmd.action = 'move';
+                cmd.direction = this.getAttribute('data-action');
+                cmd.distance = form.elements[0].value
+                cmd.time = form.elements[1].value
+            }
+
             ws.send(JSON.stringify(cmd))
+
         }, false);
     }
 
-    var res = document.getElementsByName('resolution');
     for (var i = 0; i < res.length; i++) {
         res[i].addEventListener('click', function(e) {
             if (this.checked) {
