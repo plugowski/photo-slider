@@ -17,8 +17,8 @@ class Config:
     battery_probes_amount = 2000
 
     # define pins for display
-    display_scl = Pin(23)
-    display_sda = Pin(22)
+    display_scl = Pin(4)
+    display_sda = Pin(5)
 
     # define status led (on-board led)
     status_led = Pin(2, Pin.OUT)

@@ -13,11 +13,9 @@ class SliderClient(WebSocketClient):
     def process(self):
         try:
 
-            msg = self.connection.read()
-            msg = msg.decode("utf-8")
+            msg = self.connection.read().decode("utf-8")
             command = ujson.loads(msg)
 
-            self.connection.write("cmd: " + msg)
             self.slider.status.set_socket(self.connection)
 
             if command['action'] == 'move':
@@ -49,7 +47,7 @@ class SliderServer(WebSocketServer):
 
     def __init__(self, slider: Slider):
         self.slider = slider
-        super().__init__("www/index.html", 2)
+        super().__init__(2)
 
     def _make_client(self, conn):
         return SliderClient(conn, self.slider)
